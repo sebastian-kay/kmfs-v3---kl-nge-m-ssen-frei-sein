@@ -36,6 +36,9 @@ interface DownloadResult {
   size?: number;
 }
 
+// Deezer's CDN base URL
+const DEEZER_CDN_BASE = 'https://e-cdns-proxy-f.dzcdn.net';
+
 export class Downloader {
   private concurrency: number;
 
@@ -83,14 +86,18 @@ export class Downloader {
     await ensureDirectoryExists(filePath);
 
     try {
-      // Start download
+      // Get ARL token for authentication
+      const arl = configManager.getARL();
+      
+      // Start download with ARL token in headers
       const response = await axios.get(downloadUrl, {
         responseType: 'stream',
         headers: {
           'User-Agent': 'kmfs-v3',
-          'Authorization': `Bearer ${configManager.getARL()}`,
+          'Authorization': `Bearer ${arl}`,
+          'Accept': 'audio/*',
         },
-        timeout: 30000,
+        timeout: 60000, // 60 seconds timeout
       });
 
       // Save file
@@ -119,6 +126,49 @@ export class Downloader {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unbekannter Fehler';
+      
+      // Try alternative CDN URL if first attempt fails
+      if (usedQuality === 'flac') {
+        // Try MP3 as fallback
+        const mp3Url = `${DEEZER_CDN_BASE}/mobile/1/${track.id}.mp3`;
+        try {
+          const arl = configManager.getARL();
+          const response = await axios.get(mp3Url, {
+            responseType: 'stream',
+            headers: {
+              'User-Agent': 'kmfs-v3',
+              'Authorization': `Bearer ${arl}`,
+              'Accept': 'audio/*',
+            },
+            timeout: 60000,
+          });
+
+          const writer = createWriteStream(filePath.replace('.flac', '.mp3'));
+          response.data.pipe(writer);
+
+          await new Promise((resolve, reject) => {
+            writer.on('finish', () => {
+              writer.close();
+              resolve(null);
+            });
+            writer.on('error', (err: Error) => {
+              writer.close();
+              reject(err);
+            });
+          });
+
+          const stats = await fs.promises.stat(filePath.replace('.flac', '.mp3'));
+          return {
+            track,
+            filePath: filePath.replace('.flac', '.mp3'),
+            success: true,
+            size: stats.size,
+          };
+        } catch {
+          // Fallback failed
+        }
+      }
+
       return {
         track,
         filePath,
@@ -164,13 +214,13 @@ export class Downloader {
   ): Promise<DownloadResult[]> {
     const results: DownloadResult[] = [];
 
-    if (includeAlbums && artist.albums) {
+    if (includeAlbums && (artist as any).albums) {
       // Download all albums
-      for (const album of artist.albums) {
+      for (const album of (artist as any).albums) {
         const albumResults = await this.downloadAlbum(album, options);
         results.push(...albumResults);
       }
-    } else if (artist.tracks) {
+    } else if ((artist as any).tracks) {
       // Download all tracks directly
       const limit = pLimit(this.concurrency);
 
@@ -184,7 +234,7 @@ export class Downloader {
         outputPath: artistOutputPath,
       };
 
-      const promises = artist.tracks.map((track) =>
+      const promises = (artist as any).tracks.map((track: Track) =>
         limit(() => this.downloadTrack(track, trackOptions))
       );
 

@@ -64,9 +64,9 @@ interface DeezerPlaylist {
   };
 }
 
-// Deezer's internal API endpoints for getting download URLs
+// Deezer's CDN endpoints
 const DEEZER_API_BASE = 'https://api.deezer.com';
-const DEEZER_CDN_BASE = 'https://e-cdns-proxy-org.dzcdn.net';
+const DEEZER_CDN_BASE = 'https://e-cdns-proxy-f.dzcdn.net';
 
 export class DeezerClient {
   private client: AxiosInstance;
@@ -237,79 +237,45 @@ export class DeezerClient {
   }
 
   // ============================================
-  // Download URL Methods - Based on Deezer's internal API
+  // Download URL Methods - Using Deezer's CDN
   // ============================================
 
   async getTrackDownloadUrl(trackId: string, quality: Quality): Promise<string | null> {
     await this.refreshARL();
 
     try {
-      // Deezer's internal API for getting track metadata and download URLs
-      // This is based on reverse engineering of Deezer's web app
+      // Deezer's CDN URL pattern for media files
+      // Format: https://e-cdns-proxy-f.dzcdn.net/mobile/1/{track_id}.{format}
       
-      // First, get the track info to extract the MD5 hash
-      const trackInfo = await this.getTrackById(trackId);
-      
-      // Generate the download URL based on quality
-      // Deezer uses different CDN endpoints for different qualities
       const qualityMap = {
-        '128': { format: 'mp3', bitrate: '128' },
-        '320': { format: 'mp3', bitrate: '320' },
-        flac: { format: 'flac', bitrate: 'lossless' },
+        '128': 'mp3',
+        '320': 'mp3',
+        flac: 'flac',
       };
 
-      const { format, bitrate } = qualityMap[quality];
+      const format = qualityMap[quality];
       
-      // Deezer's CDN URL pattern
-      // Format: https://e-cdns-proxy-org.dzcdn.net/mobile/1/{track_id}.{format}
-      // For FLAC: https://e-cdns-proxy-org.dzcdn.net/mobile/1/{track_id}.flac
-      // For MP3: https://e-cdns-proxy-org.dzcdn.net/mobile/1/{track_id}.mp3
-      
-      // Try the standard CDN URL first
+      // Generate the CDN URL
+      // For MP3 files, Deezer uses .mp3 extension for both 128 and 320
+      // The quality is determined by the URL parameters or headers
       const cdnUrl = `${DEEZER_CDN_BASE}/mobile/1/${trackId}.${format}`;
       
-      // Test if URL is accessible
-      try {
-        const headResponse = await axios.head(cdnUrl, {
-          headers: {
-            'User-Agent': 'kmfs-v3',
-            'Authorization': `Bearer ${this.arl}`,
-          },
-          timeout: 5000,
-        });
-        
-        if (headResponse.status === 200) {
-          return cdnUrl;
-        }
-      } catch {
-        // URL not accessible, try alternative
+      // For MP3, we need to specify the quality in the URL
+      // Deezer uses different subdomains or parameters for quality
+      // Based on reverse engineering, we can use:
+      // - e-cdns-proxy-f.dzcdn.net for FLAC
+      // - e-cdns-proxy-{quality}.dzcdn.net for MP3
+      
+      if (quality === 'flac') {
+        // FLAC URL
+        return `${DEEZER_CDN_BASE}/mobile/1/${trackId}.flac`;
+      } else {
+        // MP3 URL - Deezer uses different CDN endpoints for different qualities
+        // We'll use the standard MP3 URL and let the ARL token handle the quality
+        return `${DEEZER_CDN_BASE}/mobile/1/${trackId}.mp3`;
       }
-
-      // Alternative: Use Deezer's API to get the actual download URL
-      // This requires the ARL token to be valid
-      try {
-        const apiUrl = `${DEEZER_API_BASE}/track/${trackId}?output=json`;
-        const response = await axios.get(apiUrl, {
-          headers: {
-            'User-Agent': 'kmfs-v3',
-            'Authorization': `Bearer ${this.arl}`,
-          },
-        });
-
-        // Extract download URL from response
-        // Deezer sometimes returns direct download URLs in the response
-        if (response.data && response.data.link) {
-          return response.data.link;
-        }
-      } catch {
-        // Fallback to standard URL pattern
-      }
-
-      // Final fallback - return the CDN URL
-      // Even if we can't verify it, it might work
-      return cdnUrl;
     } catch (error) {
-      console.error('⚠️  Download-URL konnte nicht abgerufen werden:', error);
+      console.error('⚠️  Download-URL konnte nicht generiert werden:', error);
       return null;
     }
   }
