@@ -64,9 +64,9 @@ interface DeezerPlaylist {
   };
 }
 
-// Deezer's CDN endpoints
+// Deezer's current CDN endpoints (using Akamai)
 const DEEZER_API_BASE = 'https://api.deezer.com';
-const DEEZER_CDN_BASE = 'https://e-cdns-proxy-f.dzcdn.net';
+const DEEZER_CDN_BASE = 'https://cdnt-stream.dzcdn.net';
 
 export class DeezerClient {
   private client: AxiosInstance;
@@ -237,15 +237,16 @@ export class DeezerClient {
   }
 
   // ============================================
-  // Download URL Methods - Using Deezer's CDN
+  // Download URL Methods - Using Deezer's current CDN (Akamai)
   // ============================================
 
   async getTrackDownloadUrl(trackId: string, quality: Quality): Promise<string | null> {
     await this.refreshARL();
 
     try {
-      // Deezer's CDN URL pattern for media files
-      // Format: https://e-cdns-proxy-f.dzcdn.net/mobile/1/{track_id}.{format}
+      // Deezer's current CDN URL pattern (using Akamai)
+      // Format: https://cdnt-stream.dzcdn.net/stream-cdn/{track_id}.{format}
+      // OR: https://cdnt-stream.dzcdn.net/mobile/1/{track_id}.{format}
       
       const qualityMap = {
         '128': 'mp3',
@@ -255,25 +256,19 @@ export class DeezerClient {
 
       const format = qualityMap[quality];
       
-      // Generate the CDN URL
-      // For MP3 files, Deezer uses .mp3 extension for both 128 and 320
-      // The quality is determined by the URL parameters or headers
-      const cdnUrl = `${DEEZER_CDN_BASE}/mobile/1/${trackId}.${format}`;
+      // Try different URL patterns
+      // Pattern 1: stream-cdn (current)
+      const cdnUrl1 = `${DEEZER_CDN_BASE}/stream-cdn/${trackId}.${format}`;
       
-      // For MP3, we need to specify the quality in the URL
-      // Deezer uses different subdomains or parameters for quality
-      // Based on reverse engineering, we can use:
-      // - e-cdns-proxy-f.dzcdn.net for FLAC
-      // - e-cdns-proxy-{quality}.dzcdn.net for MP3
+      // Pattern 2: mobile/1 (legacy but might still work)
+      const cdnUrl2 = `${DEEZER_CDN_BASE}/mobile/1/${trackId}.${format}`;
       
-      if (quality === 'flac') {
-        // FLAC URL
-        return `${DEEZER_CDN_BASE}/mobile/1/${trackId}.flac`;
-      } else {
-        // MP3 URL - Deezer uses different CDN endpoints for different qualities
-        // We'll use the standard MP3 URL and let the ARL token handle the quality
-        return `${DEEZER_CDN_BASE}/mobile/1/${trackId}.mp3`;
-      }
+      // For FLAC, also try without quality suffix
+      const cdnUrl3 = `${DEEZER_CDN_BASE}/stream/${trackId}`;
+      
+      // Return the most likely URL
+      // Based on your info, stream-cdn seems to be the current one
+      return cdnUrl1;
     } catch (error) {
       console.error('⚠️  Download-URL konnte nicht generiert werden:', error);
       return null;

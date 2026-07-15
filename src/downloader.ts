@@ -36,8 +36,8 @@ interface DownloadResult {
   size?: number;
 }
 
-// Deezer's CDN base URL
-const DEEZER_CDN_BASE = 'https://e-cdns-proxy-f.dzcdn.net';
+// Deezer's current CDN base URL (using Akamai)
+const DEEZER_CDN_BASE = 'https://cdnt-stream.dzcdn.net';
 
 export class Downloader {
   private concurrency: number;
@@ -90,12 +90,14 @@ export class Downloader {
       const arl = configManager.getARL();
       
       // Start download with ARL token in headers
+      // Deezer requires the ARL token for authorization
       const response = await axios.get(downloadUrl, {
         responseType: 'stream',
         headers: {
           'User-Agent': 'kmfs-v3',
           'Authorization': `Bearer ${arl}`,
           'Accept': 'audio/*',
+          'Range': 'bytes=0-', // Request full file
         },
         timeout: 60000, // 60 seconds timeout
       });
@@ -118,6 +120,18 @@ export class Downloader {
       // Get file size
       const stats = await fs.promises.stat(filePath);
 
+      // Verify file size (should be > 1KB for valid audio)
+      if (stats.size < 1024) {
+        // File too small, probably an error page
+        await fs.promises.unlink(filePath);
+        return {
+          track,
+          filePath,
+          success: false,
+          error: 'Datei zu klein - wahrscheinlich ungültige URL',
+        };
+      }
+
       return {
         track,
         filePath,
@@ -127,45 +141,60 @@ export class Downloader {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unbekannter Fehler';
       
-      // Try alternative CDN URL if first attempt fails
-      if (usedQuality === 'flac') {
-        // Try MP3 as fallback
-        const mp3Url = `${DEEZER_CDN_BASE}/mobile/1/${track.id}.mp3`;
-        try {
-          const arl = configManager.getARL();
-          const response = await axios.get(mp3Url, {
-            responseType: 'stream',
-            headers: {
-              'User-Agent': 'kmfs-v3',
-              'Authorization': `Bearer ${arl}`,
-              'Accept': 'audio/*',
-            },
-            timeout: 60000,
-          });
+      // Try alternative URL patterns if first attempt fails
+      if (usedQuality) {
+        const arl = configManager.getARL();
+        
+        // Try different CDN URL patterns
+        const alternativeUrls = [
+          `${DEEZER_CDN_BASE}/mobile/1/${track.id}.${usedQuality === 'flac' ? 'flac' : 'mp3'}`,
+          `${DEEZER_CDN_BASE}/stream/${track.id}`,
+          `${DEEZER_CDN_BASE}/stream-cdn/${track.id}.${usedQuality === 'flac' ? 'flac' : 'mp3'}`,
+        ];
 
-          const writer = createWriteStream(filePath.replace('.flac', '.mp3'));
-          response.data.pipe(writer);
-
-          await new Promise((resolve, reject) => {
-            writer.on('finish', () => {
-              writer.close();
-              resolve(null);
+        for (const altUrl of alternativeUrls) {
+          try {
+            const response = await axios.get(altUrl, {
+              responseType: 'stream',
+              headers: {
+                'User-Agent': 'kmfs-v3',
+                'Authorization': `Bearer ${arl}`,
+                'Accept': 'audio/*',
+                'Range': 'bytes=0-',
+              },
+              timeout: 30000,
             });
-            writer.on('error', (err: Error) => {
-              writer.close();
-              reject(err);
-            });
-          });
 
-          const stats = await fs.promises.stat(filePath.replace('.flac', '.mp3'));
-          return {
-            track,
-            filePath: filePath.replace('.flac', '.mp3'),
-            success: true,
-            size: stats.size,
-          };
-        } catch {
-          // Fallback failed
+            const altFilePath = filePath.replace(extension, usedQuality === 'flac' ? '.flac' : '.mp3');
+            const writer = createWriteStream(altFilePath);
+            response.data.pipe(writer);
+
+            await new Promise((resolve, reject) => {
+              writer.on('finish', () => {
+                writer.close();
+                resolve(null);
+              });
+              writer.on('error', (err: Error) => {
+                writer.close();
+                reject(err);
+              });
+            });
+
+            const stats = await fs.promises.stat(altFilePath);
+            
+            if (stats.size > 1024) {
+              return {
+                track,
+                filePath: altFilePath,
+                success: true,
+                size: stats.size,
+              };
+            } else {
+              await fs.promises.unlink(altFilePath);
+            }
+          } catch {
+            // Try next URL
+          }
         }
       }
 
