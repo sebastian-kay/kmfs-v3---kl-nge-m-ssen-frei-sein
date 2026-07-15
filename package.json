@@ -1,0 +1,45 @@
+{
+  "name": "kmfs-v3",
+  "version": "3.0.0",
+  "description": "🎵 kmfs v3 - Deezer Song Downloader CLI",
+  "main": "dist/index.js",
+  "bin": {
+    "kmfs": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "deezer",
+    "downloader",
+    "music",
+    "cli",
+    "kmfs",
+    "offline",
+    "flac",
+    "mp3"
+  ],
+  "author": "sebastian-kay",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "chalk": "^5.3.0",
+    "figlet": "^1.7.0",
+    "inquirer": "^9.2.12",
+    "ora": "^8.0.1",
+    "p-limit": "^4.0.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/figlet": "^1.5.8",
+    "@types/inquirer": "^9.0.7",
+    "@types/yargs": "^17.0.32",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

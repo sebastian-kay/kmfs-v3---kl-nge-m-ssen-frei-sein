@@ -1,0 +1,18 @@
+{
+  "concurrency": 4,
+  "saveLayout": {
+    "track": "{ART_NAME} - {SNG_TITLE} ({ALB_TITLE})",
+    "album": "{ALB_TITLE}/{ART_NAME} - {SNG_TITLE} ({ALB_TITLE})",
+    "artist": "{ART_NAME} - {ALB_TITLE}/{ART_NAME} - {SNG_TITLE}",
+    "playlist": "Playlist/{TITLE}/{ART_NAME} - {SNG_TITLE} ({ALB_TITLE})"
+  },
+  "fallbackQuality": true,
+  "coverSize": {
+    "128": 500,
+    "320": 500,
+    "flac": 500
+  },
+  "cookies": {
+    "arl": ""
+  }
+}
