@@ -19,7 +19,7 @@ export interface Config {
   cookies: {
     arl: string;
   };
-  downloadPath?: string; // Optional, wird zur Laufzeit gesetzt
+  downloadPath?: string;
 }
 
 export interface Track {
@@ -35,12 +35,12 @@ export interface Track {
     cover?: string;
   };
   duration: number;
-  quality: {
+  releaseDate?: string;
+  quality?: {
     flac?: string;
     mp3_320?: string;
     mp3_128?: string;
   };
-  releaseDate?: string;
 }
 
 export interface Album {
@@ -60,6 +60,7 @@ export interface Artist {
   name: string;
   albums?: Album[];
   topTracks?: Track[];
+  tracks?: Track[]; // For expanded artist view
 }
 
 export interface Playlist {
@@ -84,15 +85,6 @@ export interface DownloadOptions {
 export interface SearchOptions {
   query: string;
   type: 'artist' | 'album' | 'track' | 'playlist';
-  year?: number; // Optional: Release-Jahr Filter
-  limit?: number;
-}
-
-export interface CLIArguments {
-  quality?: Quality;
-  arl?: string;
-  search?: string;
   year?: number;
-  help?: boolean;
-  version?: boolean;
+  limit?: number;
 }

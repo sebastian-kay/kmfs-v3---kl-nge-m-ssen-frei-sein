@@ -55,7 +55,7 @@ export class Downloader {
     let downloadUrl: string | null = null;
     let usedQuality: Quality | null = null;
 
-    // Versuche Qualitäten in Prioritätsreihenfolge
+    // Try qualities in priority order
     for (const quality of qualityPriority) {
       downloadUrl = await deezerClient.getTrackDownloadUrl(track.id, quality);
       if (downloadUrl) {
@@ -73,25 +73,27 @@ export class Downloader {
       };
     }
 
-    // Dateiname generieren
+    // Generate filename
     const filename = getTrackFilename(track, options.template);
     const sanitizedFilename = await sanitizeFilename(filename);
     const extension = getFileExtension(usedQuality);
     const filePath = path.join(options.outputPath, `${sanitizedFilename}${extension}`);
 
-    // Verzeichnis erstellen
+    // Create directory
     await ensureDirectoryExists(filePath);
 
     try {
-      // Download starten
+      // Start download
       const response = await axios.get(downloadUrl, {
         responseType: 'stream',
         headers: {
           'User-Agent': 'kmfs-v3',
+          'Authorization': `Bearer ${configManager.getARL()}`,
         },
+        timeout: 30000,
       });
 
-      // Datei speichern
+      // Save file
       const writer = createWriteStream(filePath);
       response.data.pipe(writer);
 
@@ -106,7 +108,7 @@ export class Downloader {
         });
       });
 
-      // Dateigröße ermitteln
+      // Get file size
       const stats = await fs.promises.stat(filePath);
 
       return {
@@ -116,11 +118,12 @@ export class Downloader {
         size: stats.size,
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unbekannter Fehler';
       return {
         track,
         filePath,
         success: false,
-        error: error instanceof Error ? error.message : 'Unbekannter Fehler',
+        error: errorMessage,
       };
     }
   }
@@ -135,10 +138,10 @@ export class Downloader {
     const albumPath = getAlbumFilename(album, options.template);
     const albumOutputPath = path.join(options.outputPath, albumPath);
 
-    // Album-Verzeichnis erstellen
+    // Create album directory
     await ensureDirectoryExists(albumOutputPath);
 
-    // Optionen für einzelne Tracks anpassen
+    // Options for individual tracks
     const trackOptions: DownloadOptions = {
       ...options,
       outputPath: albumOutputPath,
@@ -161,17 +164,14 @@ export class Downloader {
   ): Promise<DownloadResult[]> {
     const results: DownloadResult[] = [];
 
-    if (includeAlbums) {
-      // Alle Alben des Künstlers laden
-      const albums = await deezerClient.getArtistAlbums(artist.id);
-
-      for (const album of albums) {
+    if (includeAlbums && artist.albums) {
+      // Download all albums
+      for (const album of artist.albums) {
         const albumResults = await this.downloadAlbum(album, options);
         results.push(...albumResults);
       }
-    } else {
-      // Nur Top-Tracks laden
-      const topTracks = await deezerClient.getArtistTopTracks(artist.id);
+    } else if (artist.tracks) {
+      // Download all tracks directly
       const limit = pLimit(this.concurrency);
 
       const artistPath = getArtistFilename(artist, options.template);
@@ -184,7 +184,7 @@ export class Downloader {
         outputPath: artistOutputPath,
       };
 
-      const promises = topTracks.map((track) =>
+      const promises = artist.tracks.map((track) =>
         limit(() => this.downloadTrack(track, trackOptions))
       );
 
@@ -205,10 +205,10 @@ export class Downloader {
     const playlistPath = getPlaylistFilename(playlist, options.template);
     const playlistOutputPath = path.join(options.outputPath, playlistPath);
 
-    // Playlist-Verzeichnis erstellen
+    // Create playlist directory
     await ensureDirectoryExists(playlistOutputPath);
 
-    // Optionen für einzelne Tracks anpassen
+    // Options for individual tracks
     const trackOptions: DownloadOptions = {
       ...options,
       outputPath: playlistOutputPath,
@@ -254,6 +254,20 @@ export class Downloader {
     for (const album of albums) {
       const albumResults = await this.downloadAlbum(album, options);
       results.push(...albumResults);
+    }
+
+    return results;
+  }
+
+  async downloadPlaylists(
+    playlists: Playlist[],
+    options: DownloadOptions
+  ): Promise<DownloadResult[]> {
+    const results: DownloadResult[] = [];
+
+    for (const playlist of playlists) {
+      const playlistResults = await this.downloadPlaylist(playlist, options);
+      results.push(...playlistResults);
     }
 
     return results;
