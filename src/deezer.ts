@@ -59,7 +59,7 @@ interface DeezerPlaylist {
     id: string;
     name: string;
   };
-  tracks: {
+  tracks?: {
     data: DeezerTrack[];
   };
 }
@@ -190,11 +190,41 @@ export class DeezerClient {
     await this.refreshARL();
     const config = await this.getRequestConfig();
 
-    const response = await this.client.get<DeezerAPIResponse<DeezerPlaylist>>(
-      `/playlist/${playlistId}`,
-      config
-    );
-    return this.mapToPlaylist(response.data.data);
+    try {
+      // First try to get playlist info
+      const response = await this.client.get<DeezerAPIResponse<DeezerPlaylist>>(
+        `/playlist/${playlistId}`,
+        config
+      );
+      
+      const playlistData = response.data.data;
+      
+      // If playlist has tracks in the response, use them
+      if (playlistData.tracks && playlistData.tracks.data && playlistData.tracks.data.length > 0) {
+        return this.mapToPlaylist(playlistData);
+      }
+      
+      // If not, we need to fetch tracks separately
+      // Deezer API sometimes returns playlist without tracks
+      const tracksResponse = await this.client.get<DeezerAPIResponse<{ data: DeezerTrack[] }>>(
+        `/playlist/${playlistId}/tracks`,
+        config
+      );
+      
+      // Extract tracks from response - tracksResponse.data.data is the array
+      const tracksArray = tracksResponse.data.data.data || [];
+      
+      // Create playlist with tracks
+      return {
+        id: playlistData.id,
+        title: playlistData.title,
+        creator: playlistData.creator,
+        tracks: tracksArray.map(this.mapToTrack),
+      };
+    } catch (error: any) {
+      console.error('❌ Fehler beim Laden der Playlist:', error.message || error);
+      throw error;
+    }
   }
 
   async getTrackById(trackId: string): Promise<Track> {
@@ -213,6 +243,7 @@ export class DeezerClient {
   // ============================================
 
   parseDeezerUrl(url: string): { type: string; id: string } | null {
+    // Match Deezer URLs
     const patterns = {
       track: /deezer\.com\/.*\/track\/(\d+)/,
       album: /deezer\.com\/.*\/album\/(\d+)/,
@@ -230,6 +261,7 @@ export class DeezerClient {
     // Try to extract ID from any deezer URL
     const idMatch = url.match(/\/(\d{8,})/);
     if (idMatch) {
+      // Default to track if we can't determine type
       return { type: 'track', id: idMatch[1] };
     }
 
@@ -245,9 +277,6 @@ export class DeezerClient {
 
     try {
       // Deezer's current CDN URL pattern (using Akamai)
-      // Format: https://cdnt-stream.dzcdn.net/stream-cdn/{track_id}.{format}
-      // OR: https://cdnt-stream.dzcdn.net/mobile/1/{track_id}.{format}
-      
       const qualityMap = {
         '128': 'mp3',
         '320': 'mp3',
@@ -260,14 +289,8 @@ export class DeezerClient {
       // Pattern 1: stream-cdn (current)
       const cdnUrl1 = `${DEEZER_CDN_BASE}/stream-cdn/${trackId}.${format}`;
       
-      // Pattern 2: mobile/1 (legacy but might still work)
-      const cdnUrl2 = `${DEEZER_CDN_BASE}/mobile/1/${trackId}.${format}`;
-      
-      // For FLAC, also try without quality suffix
-      const cdnUrl3 = `${DEEZER_CDN_BASE}/stream/${trackId}`;
-      
-      // Return the most likely URL
-      // Based on your info, stream-cdn seems to be the current one
+      // For MP3, we might need to specify quality in URL
+      // But first, let's try the simple version
       return cdnUrl1;
     } catch (error) {
       console.error('⚠️  Download-URL konnte nicht generiert werden:', error);
@@ -336,14 +359,16 @@ export class DeezerClient {
   }
 
   private mapToPlaylist(deezerPlaylist: DeezerPlaylist): Playlist {
+    // Extract tracks from the tracks.data property
+    const tracksData = deezerPlaylist.tracks?.data || [];
     return {
       id: deezerPlaylist.id,
       title: deezerPlaylist.title,
       creator: {
-        id: deezerPlaylist.creator.id,
-        name: deezerPlaylist.creator.name,
+        id: deezerPlaylist.creator?.id || '',
+        name: deezerPlaylist.creator?.name || 'Unknown',
       },
-      tracks: deezerPlaylist.tracks?.data?.map(this.mapToTrack) || [],
+      tracks: tracksData.map(this.mapToTrack),
     };
   }
 }

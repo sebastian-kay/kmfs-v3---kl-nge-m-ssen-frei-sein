@@ -192,7 +192,9 @@ function toggleSelection(id: string): void {
 
 function selectAll(): void {
   state.currentResults.forEach((item) => {
-    state.selectedItems.add(item.id);
+    if (item && item.id) {
+      state.selectedItems.add(item.id);
+    }
   });
 }
 
@@ -222,6 +224,8 @@ function displayResults(results: Array<{ id: string; [key: string]: any }>, type
   console.log(chalk.gray('-'.repeat(80)));
 
   results.forEach((item: any, index: number) => {
+    if (!item || !item.id) return;
+    
     if (type === 'track' || (type === 'mixed' && 'duration' in item)) {
       console.log(formatTrack(item, index, false));
     } else if (type === 'album' || (type === 'mixed' && 'tracks' in item)) {
@@ -253,6 +257,8 @@ function displaySelection(): void {
   console.log(chalk.gray('-'.repeat(80)));
 
   state.currentResults.forEach((item: any, index: number) => {
+    if (!item || !item.id) return;
+    
     const isSelectedMark = state.selectedItems.has(item.id);
     const marker = isSelectedMark ? chalk.green('✓') : chalk.gray('⊠');
     const prefix = `${marker} ${index + 1}.`;
@@ -358,34 +364,50 @@ async function resolveInput(input: string): Promise<ResolvedResult | null> {
         switch (type) {
           case 'track':
             const track = await deezerClient.getTrackById(id);
+            if (!track || !track.id) {
+              printError('Track nicht gefunden');
+              return null;
+            }
             return { type: 'track', data: [track] };
 
           case 'album':
             const album = await deezerClient.getAlbumById(id);
+            if (!album || !album.id) {
+              printError('Album nicht gefunden');
+              return null;
+            }
             const albumTracks = await deezerClient.getAlbumTracks(id);
-            (album as any).tracks = albumTracks;
-            return { type: 'album', data: [album as any] };
+            (album as Album).tracks = albumTracks;
+            return { type: 'album', data: [album as Album] };
 
           case 'artist':
             const artist = await deezerClient.getArtistById(id);
+            if (!artist || !artist.id) {
+              printError('Künstler nicht gefunden');
+              return null;
+            }
             const artistAlbums = await deezerClient.getArtistAlbums(id);
             const allTracks: Track[] = [];
             for (const album of artistAlbums) {
               const tracks = await deezerClient.getAlbumTracks(album.id);
               allTracks.push(...tracks);
             }
-            return { type: 'artist', data: [{ ...artist, tracks: allTracks }] };
+            return { type: 'artist', data: [{ ...artist, tracks: allTracks } as Artist & { tracks: Track[] }] };
 
           case 'playlist':
             const playlist = await deezerClient.getPlaylistById(id);
+            if (!playlist || !playlist.id) {
+              printError('Playlist nicht gefunden');
+              return null;
+            }
             return { type: 'playlist', data: [playlist] };
 
           default:
             printError('Unbekannter Typ');
             return null;
         }
-      } catch (error) {
-        printError(`Fehler beim Laden: ${error}`);
+      } catch (error: any) {
+        printError(`Fehler beim Laden: ${error.message || error}`);
         return null;
       }
     }
@@ -401,9 +423,17 @@ async function resolveInput(input: string): Promise<ResolvedResult | null> {
         limit: 20,
       })) as any;
 
-      return { type, data: results };
-    } catch (error) {
-      printError(`Suche fehlgeschlagen: ${error}`);
+      // Filter out any undefined or invalid results
+      const validResults = results.filter((r: any) => r && r.id);
+      
+      if (validResults.length === 0) {
+        printWarning('Keine gültigen Ergebnisse gefunden');
+        return null;
+      }
+
+      return { type, data: validResults };
+    } catch (error: any) {
+      printError(`Suche fehlgeschlagen: ${error.message || error}`);
       return null;
     }
   }
@@ -417,16 +447,22 @@ async function resolveInput(input: string): Promise<ResolvedResult | null> {
       deezerClient.search({ query: trimmedInput, type: 'playlist', limit: 5 }),
     ]);
 
+    // Filter and combine results
     const results = [
-      ...(artists as any[]),
-      ...(albums as any[]),
-      ...(tracks as any[]),
-      ...(playlists as any[]),
+      ...(artists as any[]).filter(r => r && r.id),
+      ...(albums as any[]).filter(r => r && r.id),
+      ...(tracks as any[]).filter(r => r && r.id),
+      ...(playlists as any[]).filter(r => r && r.id),
     ];
 
+    if (results.length === 0) {
+      printWarning('Keine Ergebnisse gefunden');
+      return null;
+    }
+
     return { type: 'mixed', data: results };
-  } catch (error) {
-    printError(`Suche fehlgeschlagen: ${error}`);
+  } catch (error: any) {
+    printError(`Suche fehlgeschlagen: ${error.message || error}`);
     return null;
   }
 }
@@ -446,7 +482,7 @@ async function downloadSelectedItems(): Promise<void> {
 
   // Collect all tracks from selected items
   for (const id of selectedIds) {
-    const item = state.currentResults.find((i) => i.id === id);
+    const item = state.currentResults.find((i) => i && i.id === id);
     if (item) {
       if ('duration' in item) {
         // Direct track
@@ -454,12 +490,14 @@ async function downloadSelectedItems(): Promise<void> {
       } else if ('tracks' in item) {
         // Album or Playlist - add all tracks
         const tracks = (item as Album | Playlist).tracks;
-        itemsToDownload.push(...tracks);
+        if (tracks && Array.isArray(tracks)) {
+          itemsToDownload.push(...tracks.filter((t: any) => t && t.id));
+        }
       } else if ('name' in item && !('tracks' in item) && !('creator' in item)) {
         // Artist
         const artist = item as Artist;
         if ((artist as any).tracks) {
-          itemsToDownload.push(...(artist as any).tracks);
+          itemsToDownload.push(...(artist as any).tracks.filter((t: any) => t && t.id));
         }
       }
     }
@@ -500,8 +538,8 @@ async function downloadSelectedItems(): Promise<void> {
     // Clear selection after download
     clearSelection();
     exitSelectionMode();
-  } catch (error) {
-    printError(`Download fehlgeschlagen: ${error}`);
+  } catch (error: any) {
+    printError(`Download fehlgeschlagen: ${error.message || error}`);
     exitSelectionMode();
   }
 }
@@ -549,32 +587,44 @@ async function startInteractiveMode(): Promise<void> {
           // Single result - download directly
           const item = data[0];
           
+          if (!item || !item.id) {
+            printError('Ungültiges Element');
+            printPrompt();
+            return;
+          }
+          
           if ('duration' in item) {
             // Single track
             state.selectedItems.add(item.id);
             await downloadSelectedItems();
           } else if ('tracks' in item) {
             // Album or Playlist - show tracks for selection
-            state.currentResults = (item as any).tracks || [];
-            state.currentType = 'track';
-            enterSelectionMode();
+            const tracks = (item as Album | Playlist).tracks;
+            if (tracks && Array.isArray(tracks) && tracks.length > 0) {
+              state.currentResults = tracks.filter((t: any) => t && t.id);
+              state.currentType = 'track';
+              enterSelectionMode();
+            } else {
+              printWarning('Keine Tracks in diesem Element gefunden');
+              printPrompt();
+            }
           } else if ('name' in item && !('tracks' in item) && !('creator' in item)) {
             // Artist - show all tracks
             const allTracks = (item as any).tracks || [];
             if (allTracks.length > 0) {
-              state.currentResults = allTracks;
+              state.currentResults = allTracks.filter((t: any) => t && t.id);
               state.currentType = 'track';
               enterSelectionMode();
             } else {
               // Need to fetch tracks
-              const artist = item as any;
+              const artist = item as Artist;
               const artistAlbums = await deezerClient.getArtistAlbums(artist.id);
-              const allArtistTracks: any[] = [];
+              const allArtistTracks: Track[] = [];
               for (const album of artistAlbums) {
                 const tracks = await deezerClient.getAlbumTracks(album.id);
                 allArtistTracks.push(...tracks);
               }
-              state.currentResults = allArtistTracks;
+              state.currentResults = allArtistTracks.filter((t: Track) => t && t.id);
               state.currentType = 'track';
               enterSelectionMode();
             }
@@ -590,8 +640,8 @@ async function startInteractiveMode(): Promise<void> {
       if (!state.inSelectionMode) {
         printPrompt();
       }
-    } catch (error) {
-      printError(`Fehler: ${error}`);
+    } catch (error: any) {
+      printError(`Fehler: ${error.message || error}`);
       if (!state.inSelectionMode) {
         printPrompt();
       }
@@ -626,8 +676,10 @@ function handleSelectionInput(input: string): void {
       const num = parseInt(input);
       if (!isNaN(num) && num > 0 && num <= state.currentResults.length) {
         const item = state.currentResults[num - 1];
-        toggleSelection(item.id);
-        displaySelection();
+        if (item && item.id) {
+          toggleSelection(item.id);
+          displaySelection();
+        }
       } else {
         printError('Ungültige Eingabe. Nutze: 1-9 (markieren), a (alle), d (download), c (abbrechen)');
         displaySelection();
